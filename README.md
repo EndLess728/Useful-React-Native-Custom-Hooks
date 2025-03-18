@@ -19,9 +19,9 @@ This hook listens for changes in the app's active state (foreground/background) 
 ```javascript
 import useAppActiveState from './useAppActiveState';
 
- useAppActiveState(() => {
+useAppActiveState(() => {
     fetchActiveRide();
-  }); // Call any method when app comes to foreground
+}); // Call any method when app comes to foreground
 ```
 
 ---
@@ -105,6 +105,34 @@ const App = () => {
 };
 
 export default NotificationScreen;
+```
+
+---
+
+### 6. `useKeyboard.js`
+
+#### Description:
+This hook listens for keyboard visibility changes and provides the keyboard height.
+
+#### Usage:
+```javascript
+import useKeyboard from './useKeyboard';
+import { View, TextInput, Text, Button } from 'react-native';
+
+const ExampleScreen = () => {
+  const { isKeyboardVisible, keyboardHeight, closeKeyboard } = useKeyboard();
+
+  return (
+    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+      <TextInput placeholder="Type something" style={{ height: 40, borderBottomWidth: 1, width: '80%' }} />
+      {isKeyboardVisible && <Text>Keyboard is visible</Text>}
+      <Text>Keyboard Height: {keyboardHeight}px</Text>
+      <Button title="Dismiss Keyboard" onPress={closeKeyboard} />
+    </View>
+  );
+};
+
+export default ExampleScreen;
 ```
 
 ---
