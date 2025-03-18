@@ -54,7 +54,6 @@ import useMediaPicker from './useMediaPicker';
 
 const { media, resetMedia, pickImageWithCamera, pickImageWithLibrary } =
     useMediaPicker();
-
 ```
 
 ---
@@ -71,6 +70,41 @@ import useNetworkStatus from './useNetworkStatus';
 const isOnline = useNetworkStatus();
 
 console.log(isOnline ? 'Online' : 'Offline');
+```
+
+---
+
+### 5. `useNotifications.js`
+
+#### Description:
+This hook manages push notifications using Firebase Cloud Messaging (`@react-native-firebase/messaging`) and Expo Notifications (`expo-notifications`). It handles notification permissions, retrieves the FCM token, and navigates users based on notification clicks.
+
+#### Usage:
+```javascript
+import React, { useEffect } from "react";
+import { View, Text, Button, Alert } from "react-native";
+import { useNotifications } from "./useNotifications"; // Adjust the path as needed
+
+const App = () => {
+  const { getFcmToken, permissions } = useNotifications(); // Use this in App.js or RootNavigator.js, avoid using it in multiple screens it can cause duplicate notification issue
+
+  useEffect(() => {
+    if (permissions) {
+      Alert.alert("Notifications Enabled", "You will receive push notifications.");
+    } else {
+      Alert.alert("Notifications Disabled", "Enable them in settings.");
+    }
+  }, [permissions]);
+
+  return (
+    <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <Text>Push Notification Example</Text>
+      <Button title="Get FCM Token" onPress={getFcmToken} />
+    </View>
+  );
+};
+
+export default NotificationScreen;
 ```
 
 ---
