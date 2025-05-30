@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import messaging from "@react-native-firebase/messaging";
 import * as Notifications from "expo-notifications";
 import { navigate } from "@/navigation/navigationRef";
@@ -11,10 +11,9 @@ globalThis.RNFB_SILENCE_MODULAR_DEPRECATION_WARNINGS = true;
 
 export const useNotifications = () => {
   const [permissions, setPermissions] = useState(false);
-  // Store processed message IDs to prevent duplicate notifications
-  const [processedMessageIds, setProcessedMessageIds] = useState(new Set());
+  const processedIdsRef = useRef(new Set());
 
-  const requestUserPermission = async () => {
+  const requestPermissions = async () => {
     try {
       const { status: existingStatus } = await Notifications.getPermissionsAsync();
       let finalStatus = existingStatus;
@@ -24,78 +23,89 @@ export const useNotifications = () => {
       }
       if (finalStatus !== "granted") {
         console.warn("Notification permission not granted.");
-        alert("Please enable notifications in your settings.");
         return false;
       }
       return true;
-    } catch (error) {
-      console.error("Error requesting notification permissions:", error);
+    } catch (err) {
+      console.error("Error requesting notification permissions:", err);
       return false;
     }
   };
 
-  const handleNotificationClick = async (response) => {
-    console.log("Response on notification click:", JSON.stringify(response));
-    const notificationData = response?.notification?.request?.content?.data;
-    navigateToChat(notificationData);
-  };
-
-  const getFcmToken = async () => {
+  const getAndStoreFcmToken = async () => {
     try {
-      const fcmToken = await messaging().getToken();
-      console.log("fcmToken:", fcmToken);
-      if (fcmToken) {
-        storage.set(STORAGE_KEYS.FCM_TOKEN, fcmToken);
+      const token = await messaging().getToken();
+      if (token) {
+        storage.set(STORAGE_KEYS.FCM_TOKEN, token);
+        console.log("Stored FCM token:", token);
       }
-    } catch (error) {
-      console.log("error fetching fcm token:", error);
+    } catch (err) {
+      console.error("Failed to get/store FCM token:", err);
     }
   };
 
-  const navigateToChat = (notificationData) => {
-    if (notificationData?.type === "new_chat") {
+  const navigateToChat = useCallback((data) => {
+    if (data?.type === "new_chat") {
       navigate(NAVIGATION.chatScreen, {
-        rideId: notificationData?.rideId,
-        driverInfo: notificationData?.userId,
+        rideId: data.rideId,
+        driverInfo: data.userId,
       });
     }
-  };
+  }, []);
 
-  const scheduleNotification = async (remoteMessage) => {
-    const messageId = remoteMessage?.messageId || remoteMessage?.data?.id;
+  const scheduleNotification = useCallback(async (remoteMessage) => {
+    const messageId = remoteMessage.messageId ?? remoteMessage.data?.id;
     if (!messageId) {
-      console.warn("No messageId found in remoteMessage, skipping notification");
+      console.warn("No messageId in remoteMessage, skipping");
       return;
     }
-
-    // Check if message has already been processed
-    if (processedMessageIds.has(messageId)) {
-      console.log(`Message ${messageId} already processed, skipping notification`);
+    if (processedIdsRef.current.has(messageId)) {
+      console.log(`Already processed ${messageId}, skipping`);
       return;
     }
+    processedIdsRef.current.add(messageId);
 
-    // Add messageId to processed set
-    setProcessedMessageIds((prev) => new Set(prev).add(messageId));
-
-    const notification = {
-      title: remoteMessage?.notification?.title || remoteMessage?.data?.title,
-      body: remoteMessage?.notification?.body || remoteMessage?.data?.body,
-      data: remoteMessage?.data?.data ? JSON.parse(remoteMessage?.data?.data) : {},
+    const payload = {
+      title: remoteMessage.notification?.title ?? remoteMessage.data?.title,
+      body: remoteMessage.notification?.body ?? remoteMessage.data?.body,
+      data: remoteMessage.data?.data ? JSON.parse(remoteMessage.data.data) : {},
     };
-
-    console.log("Scheduling notification:", notification);
-
+    console.log("Scheduling local notification:", payload);
     await Notifications.scheduleNotificationAsync({
-      content: notification,
+      content: payload,
       trigger: null,
     });
-  };
+  }, []);
+
+  const handleNotificationClick = useCallback(
+    (response) => {
+      console.log("Notification clicked:", response);
+      navigateToChat(response.notification.request.content.data);
+    },
+    [navigateToChat]
+  );
 
   useEffect(() => {
-    const initializeNotifications = async () => {
-      const permissionAllowed = await requestUserPermission();
-      setPermissions(permissionAllowed);
+    let unsubscribeMessage;
+    let unsubscribeClick;
+    let unsubscribeTokenRefresh;
 
+    (async () => {
+      const isGranted = await requestPermissions();
+      setPermissions(isGranted);
+      if (!isGranted) {
+        alert("Please enable notifications in your settings.");
+        return;
+      }
+
+      // FCM token management
+      await getAndStoreFcmToken();
+      unsubscribeTokenRefresh = messaging().onTokenRefresh((newToken) => {
+        storage.set(STORAGE_KEYS.FCM_TOKEN, newToken);
+        console.log("FCM token refreshed:", newToken);
+      });
+
+      // Show notifications when app is in foreground
       Notifications.setNotificationHandler({
         handleNotification: async () => ({
           shouldShowAlert: true,
@@ -104,46 +114,42 @@ export const useNotifications = () => {
         }),
       });
 
-      // Listener for notification clicks
-      const notificationClickSubscription =
-        Notifications.addNotificationResponseReceivedListener(handleNotificationClick);
+      // User taps on notification
+      unsubscribeClick = Notifications.addNotificationResponseReceivedListener(handleNotificationClick);
 
-      // Handle notification opened while app is in background
-      messaging().onNotificationOpenedApp((remoteMessage) => {
-        console.log("Notification caused app to open from background state:", JSON.stringify(remoteMessage));
-        const notificationData = remoteMessage?.data?.data ? JSON.parse(remoteMessage?.data?.data) : {};
-        navigateToChat(notificationData);
-      });
-
-      // Handle notification when app was quit
-      const initialNotification = await messaging().getInitialNotification();
-      if (initialNotification) {
-        const notificationData = initialNotification?.data?.data
-          ? JSON.parse(initialNotification?.data?.data)
-          : {};
-        navigateToChat(notificationData);
+      // App opened from quit state via notification
+      const initial = await messaging().getInitialNotification();
+      if (initial) {
+        const data = initial?.data?.data ? JSON.parse(initial?.data?.data) : {};
+        navigateToChat(data);
       }
 
-      // Handle push notifications in the background
+      // App opened from background
+      messaging().onNotificationOpenedApp((remoteMessage) => {
+        console.log("Opened from background:", remoteMessage);
+        const data = remoteMessage.data.data ? JSON.parse(remoteMessage.data.data) : {};
+        navigateToChat(data);
+      });
+
+      // Background push handler
       messaging().setBackgroundMessageHandler(async (remoteMessage) => {
-        console.log("Message handled in the background!", remoteMessage);
+        console.log("Background FCM:", remoteMessage);
         await scheduleNotification(remoteMessage);
       });
 
-      // Handle push notifications in the foreground
-      const unsubscribe = messaging().onMessage(async (remoteMessage) => {
-        console.log("Message received in foreground:", remoteMessage);
+      // Foreground push handler
+      unsubscribeMessage = messaging().onMessage(async (remoteMessage) => {
+        console.log("Foreground FCM:", remoteMessage);
         await scheduleNotification(remoteMessage);
       });
+    })();
 
-      return () => {
-        unsubscribe();
-        notificationClickSubscription.remove();
-      };
+    return () => {
+      unsubscribeMessage && unsubscribeMessage();
+      unsubscribeClick && unsubscribeClick.remove();
+      unsubscribeTokenRefresh && unsubscribeTokenRefresh();
     };
+  }, [handleNotificationClick, scheduleNotification]);
 
-    initializeNotifications();
-  }, []);
-
-  return { getFcmToken, permissions };
+  return { permissions };
 };
