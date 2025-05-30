@@ -86,7 +86,7 @@ import { View, Text, Button, Alert } from "react-native";
 import { useNotifications } from "./useNotifications"; // Adjust the path as needed
 
 const App = () => {
-  const { getFcmToken, permissions } = useNotifications(); // Use this in App.js or RootNavigator.js, avoid using it in multiple screens it can cause duplicate notification issue
+  const { permissions } = useNotifications(); // Use this in App.js or RootNavigator.js,
 
   useEffect(() => {
     if (permissions) {
@@ -99,7 +99,6 @@ const App = () => {
   return (
     <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
       <Text>Push Notification Example</Text>
-      <Button title="Get FCM Token" onPress={getFcmToken} />
     </View>
   );
 };
