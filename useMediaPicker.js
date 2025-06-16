@@ -1,56 +1,230 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   useMediaLibraryPermissions,
   useCameraPermissions,
   launchImageLibraryAsync,
   launchCameraAsync,
-  MediaTypeOptions,
+  ImagePickerResult,
+  PermissionResponse,
+  MediaType,
+  ImagePickerOptions,
 } from "expo-image-picker";
+import * as DocumentPicker from "expo-document-picker";
+import { MEDIA_TYPES } from "@/constants/strings";
+import { generateUID } from "@/utils/globalMethods";
+import * as VideoThumbnails from "expo-video-thumbnails";
 
-const useMediaPicker = () => {
+// For images/videos
+export interface MediaAsset {
+  uri: string;
+  type?: string;
+  id: string;
+  name?: string | null;
+  thumbnail?: string;
+  mimeType?: string | null;
+}
+
+// For documents
+export interface DocumentAsset {
+  uri: string;
+  name: string;
+  size?: number | null;
+  mimeType?: string | null;
+  id: string;
+}
+
+const useMediaPicker = (
+  mediaType?: MediaType | MediaType[],
+  options?: ImagePickerOptions
+) => {
   const [mediaStatus, requestMediaPermission] = useMediaLibraryPermissions();
   const [cameraStatus, requestCameraPermission] = useCameraPermissions();
-  const [media, setMedia] = useState(null);
 
-  // Function to open the image library
-  const pickImageWithLibrary = useCallback(async () => {
-    if (!mediaStatus?.granted) {
-      const permission = await requestMediaPermission();
-      if (!permission.granted) return; // Exit if permission not granted
+  const [media, setMedia] = useState<MediaAsset | DocumentAsset | null>(null);
+  const [multipleMedia, setMultipleMedia] = useState<
+    (MediaAsset | DocumentAsset)[] | null
+  >(null);
+  const [thumbnail, setThumbail] = useState<string>("");
+  const [loading, setLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    generateThumbnail();
+  }, [media?.uri, mediaType]);
+
+  const generateThumbnail = async () => {
+    if (!media?.uri || mediaType !== MEDIA_TYPES.VIDEOS) return;
+
+    setLoading(true);
+    try {
+      const { uri } = await VideoThumbnails.getThumbnailAsync(media?.uri, {
+        time: 15000,
+      });
+      setThumbail(uri);
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
     }
+  };
 
-    const result = await launchImageLibraryAsync({
-      mediaTypes: MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 1,
-    });
-
-    if (!result.canceled) {
-      setMedia(result.assets[0]);
+  const handlePermission = async (
+    status: PermissionResponse | null,
+    requestPermission: () => Promise<PermissionResponse>
+  ): Promise<boolean> => {
+    if (!status?.granted) {
+      const permission = await requestPermission();
+      return permission.granted;
     }
-  }, [mediaStatus, requestMediaPermission]);
+    return true;
+  };
 
-  // Function to open the camera
+  const chooseImageFromLibrary = useCallback(async () => {
+    const hasPermission = await handlePermission(
+      mediaStatus,
+      requestMediaPermission
+    );
+    if (!hasPermission) return;
+
+    setLoading(true);
+    try {
+      const result: ImagePickerResult = await launchImageLibraryAsync({
+        mediaTypes: mediaType || (MEDIA_TYPES.IMAGES as MediaType),
+        quality: 1,
+        ...(mediaType === MEDIA_TYPES.IMAGES && { allowsEditing: true }),
+        ...options,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (options?.allowsMultipleSelection && !options?.allowsEditing) {
+          const mappedResults = result.assets.map((asset) => {
+            return {
+              uri: asset.uri,
+              type: asset.type,
+              id: generateUID(),
+              name: asset.fileName,
+              mimeType: asset.mimeType,
+            };
+          });
+          setMultipleMedia(mappedResults);
+        } else {
+          const asset = result.assets[0];
+          setMedia({
+            uri: asset.uri,
+            type: asset.type,
+            id: generateUID(),
+            name: asset.fileName,
+            mimeType: asset.mimeType,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
+    }
+  }, [mediaStatus, requestMediaPermission, mediaType]);
+
   const pickImageWithCamera = useCallback(async () => {
-    if (!cameraStatus?.granted) {
-      const permission = await requestCameraPermission();
-      if (!permission.granted) return; // Exit if permission not granted
+    const hasPermission = await handlePermission(
+      cameraStatus,
+      requestCameraPermission
+    );
+    if (!hasPermission) return;
+
+    setLoading(true);
+    try {
+      const result: ImagePickerResult = await launchCameraAsync({
+        mediaTypes: mediaType || (MEDIA_TYPES.IMAGES as MediaType),
+        quality: 1,
+        ...(mediaType === MEDIA_TYPES.IMAGES && { allowsEditing: true }),
+        ...options,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (options?.allowsMultipleSelection && !options?.allowsEditing) {
+          const mappedResults = result.assets.map((asset) => {
+            return {
+              uri: asset.uri,
+              type: asset.type,
+              id: generateUID(),
+              name: asset.fileName,
+              mimeType: asset.mimeType,
+            };
+          });
+          setMultipleMedia(mappedResults);
+        } else {
+          const asset = result.assets[0];
+          setMedia({
+            uri: asset.uri,
+            type: asset.type,
+            id: generateUID(),
+            name: asset.fileName,
+            mimeType: asset.mimeType,
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
     }
+  }, [cameraStatus, requestCameraPermission, mediaType]);
 
-    const result = await launchCameraAsync({
-      mediaTypes: MediaTypeOptions.Images,
-      allowsEditing: true,
-      quality: 1,
-    });
+  const pickDocument = useCallback(async () => {
+    setLoading(true);
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        copyToCacheDirectory: true,
+        multiple: false,
+        type: ["image/*", "application/pdf"],
+      });
 
-    if (!result.canceled) {
-      setMedia(result.assets[0]);
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        if (options?.allowsMultipleSelection && !options?.allowsEditing) {
+          const mappedResults = result.assets.map((doc) => {
+            return {
+              uri: doc.uri,
+              name: doc.name,
+              size: doc.size,
+              mimeType: doc.mimeType,
+              id: generateUID(),
+            };
+          });
+          setMultipleMedia(mappedResults);
+        } else {
+          const doc = result.assets[0];
+          setMedia({
+            uri: doc.uri,
+            name: doc.name,
+            size: doc.size,
+            mimeType: doc.mimeType,
+            id: generateUID(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(e);
+    } finally {
+      setLoading(false);
     }
-  }, [cameraStatus, requestCameraPermission]);
+  }, []);
 
-  const resetMedia = () => setMedia(null);
+  const resetMedia = () => {
+    setMedia(null);
+    setMultipleMedia(null);
+    setThumbail("");
+  };
 
-  return { media, pickImageWithLibrary, pickImageWithCamera, resetMedia };
+  return {
+    media,
+    thumbnail,
+    loading,
+    multipleMedia,
+    chooseImageFromLibrary,
+    pickImageWithCamera,
+    pickDocument,
+    resetMedia,
+  };
 };
 
 export default useMediaPicker;
